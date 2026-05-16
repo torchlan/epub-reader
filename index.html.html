@@ -1,0 +1,481 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Torch Epub Reader</title>
+    
+    <!-- Include ePub.js and jszip via CDN -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.1.5/jszip.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/epubjs/dist/epub.min.js"></script>
+
+    <style>
+        /* CSS Variables to handle global theme switching smoothly */
+        :root {
+            --bg-color: #f4f4f7;
+            --header-bg: #ffffff;
+            --text-color: #333333;
+            --border-color: #f0f0f2;
+            --viewer-bg: #ffffff;
+            --shadow-color: rgba(0,0,0,0.08);
+        }
+
+        [data-theme="dark"] {
+            --bg-color: #121212;
+            --header-bg: #1e1e1e;
+            --text-color: #e0e0e0;
+            --border-color: #2c2c2e;
+            --viewer-bg: #1c1c1e;
+            --shadow-color: rgba(0,0,0,0.4);
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+            margin: 0;
+            padding: 0;
+            background-color: var(--bg-color);
+            color: var(--text-color);
+            display: flex;
+            flex-direction: column;
+            height: 100vh;
+            overflow: hidden;
+            overscroll-behavior-y: contain; 
+            transition: background-color 0.3s;
+        }
+
+        /* Initial Landing State */
+        #upload-container {
+            display: flex;
+            flex-direction: column;
+            justify-content: space-between;
+            align-items: center;
+            height: 100vh;
+            background-color: #f4f4f7;
+            padding: 40px 20px;
+            box-sizing: border-box;
+        }
+
+        .front-title {
+            font-size: 32px;
+            font-weight: 800;
+            color: #111111;
+            margin-top: 40px;
+            text-align: center;
+            letter-spacing: -0.5px;
+        }
+
+        .custom-file-upload {
+            padding: 15px 30px;
+            background-color: #007aff;
+            color: white;
+            border-radius: 8px;
+            font-size: 16px;
+            font-weight: 500;
+            cursor: pointer;
+            box-shadow: 0 4px 12px rgba(0, 122, 255, 0.2);
+            transition: background 0.2s, transform 0.1s;
+        }
+
+        .custom-file-upload:hover {
+            background-color: #0056b3;
+        }
+
+        .front-footer {
+            font-size: 12px;
+            color: #666666;
+            text-align: center;
+            margin-bottom: 20px;
+        }
+
+        #file-input {
+            display: none;
+        }
+
+        /* App Reader Interface */
+        #app-interface {
+            display: none;
+            flex-direction: column;
+            height: 100vh;
+            position: relative;
+        }
+
+        header {
+            background-color: var(--header-bg);
+            padding: 12px 20px;
+            box-shadow: 0 2px 8px var(--shadow-color);
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            z-index: 10;
+            height: 44px;
+            border-bottom: 1px solid var(--border-color);
+        }
+
+        .left-controls {
+            display: flex;
+            gap: 12px;
+            align-items: center;
+            position: relative;
+        }
+
+        /* Standardized Action Buttons */
+        .icon-btn {
+            background: none;
+            border: none;
+            cursor: pointer;
+            padding: 0;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            width: 36px;
+            height: 36px;
+            border-radius: 6px;
+            transition: background 0.2s;
+        }
+
+        .icon-btn:hover {
+            background-color: var(--border-color);
+        }
+
+        /* SVG Icon strokes bounded to CSS text variable */
+        .icon-btn svg {
+            stroke: var(--text-color);
+            fill: none;
+        }
+
+        .controls {
+            display: flex;
+            gap: 10px;
+        }
+
+        .nav-btn {
+            padding: 6px 12px;
+            background-color: transparent;
+            color: #007aff;
+            border: 1px solid #007aff;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 14px;
+            font-weight: 500;
+        }
+
+        .nav-btn:hover {
+            background-color: rgba(0, 122, 255, 0.05);
+        }
+
+        #viewer-container {
+            flex: 1;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            padding: 15px;
+            box-sizing: border-box;
+        }
+
+        #viewer {
+            width: 100%;
+            max-width: 800px;
+            height: 100%;
+            background: var(--viewer-bg);
+            box-shadow: 0 4px 12px var(--shadow-color);
+            border-radius: 12px;
+            overflow: hidden;
+        }
+
+        /* Sidebar Table of Contents Overlay */
+        #toc-sidebar {
+            position: absolute;
+            top: 69px;
+            left: -320px;
+            width: 280px;
+            height: calc(100vh - 69px);
+            background-color: var(--header-bg);
+            box-shadow: 4px 0 12px var(--shadow-color);
+            z-index: 20;
+            overflow-y: auto;
+            transition: left 0.3s ease;
+            padding: 15px;
+            box-sizing: border-box;
+            border-right: 1px solid var(--border-color);
+        }
+
+        #toc-sidebar.open {
+            left: 0;
+        }
+
+        #toc-list {
+            list-style: none;
+            padding: 0;
+            margin: 0;
+        }
+
+        #toc-list li {
+            padding: 12px 10px;
+            border-bottom: 1px solid var(--border-color);
+            cursor: pointer;
+            font-size: 15px;
+            color: var(--text-color);
+            border-radius: 6px;
+        }
+
+        #toc-list li:hover {
+            background-color: var(--bg-color);
+            color: #007aff;
+        }
+
+        /* Theme Dropdown Menu Styling */
+        #theme-dropdown {
+            position: absolute;
+            top: 48px;
+            left: 48px;
+            background-color: var(--header-bg);
+            border: 1px solid var(--border-color);
+            box-shadow: 0 4px 12px var(--shadow-color);
+            border-radius: 8px;
+            display: none;
+            flex-direction: column;
+            padding: 6px 0;
+            z-index: 30;
+            min-width: 130px;
+        }
+
+        #theme-dropdown.open {
+            display: flex;
+        }
+
+        .theme-opt {
+            padding: 10px 16px;
+            background: none;
+            border: none;
+            text-align: left;
+            font-size: 14px;
+            color: var(--text-color);
+            cursor: pointer;
+            width: 100%;
+        }
+
+        .theme-opt:hover {
+            background-color: var(--bg-color);
+        }
+    </style>
+</head>
+<body>
+
+    <!-- State 1: Clean Launch View -->
+    <div id="upload-container">
+        <h1 class="front-title">Torch Epub Reader</h1>
+        
+        <div>
+            <label for="file-input" class="custom-file-upload">Choose EPUB File</label>
+            <input type="file" id="file-input" accept=".epub" />
+        </div>
+
+        <div class="front-footer">
+            powered by: The Real Estate Network
+        </div>
+    </div>
+
+    <!-- State 2: Main Reader View -->
+    <div id="app-interface">
+        <header>
+            <div class="left-controls">
+                <!-- Chapter Menu Icon -->
+                <button class="icon-btn" id="menu-toggle" title="Table of Contents">
+                    <svg width="22" height="22" viewBox="0 0 24 24" stroke-width="2"><line x1="3" y1="12" x2="21" y2="12"></line><line x1="3" y1="6" x2="21" y2="6"></line><line x1="3" y1="18" x2="21" y2="18"></line></svg>
+                </button>
+                
+                <!-- Theme Light/Dark Menu Icon -->
+                <button class="icon-btn" id="theme-toggle" title="Change Theme">
+                    <svg width="22" height="22" viewBox="0 0 24 24" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 14c.2-1 .7-1.7 1.5-2.5 1-.9 1.5-2.2 1.5-3.5A6 6 0 0 0 6 8c0 1 .6 2.2 1.5 3.5.7.7 1.3 1.5 1.5 2.5"></path><line x1="9" y1="18" x2="15" y2="18"></line><line x1="10" y1="22" x2="14" y2="22"></line></svg>
+                </button>
+
+                <!-- Fullscreen Vertical Rectangle Icon -->
+                <button class="icon-btn" id="fullscreen-toggle" title="Toggle Fullscreen">
+                    <svg width="20" height="22" viewBox="0 0 24 24" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="5" y="2" width="14" height="20" rx="2" ry="2"></rect></svg>
+                </button>
+
+                <!-- Dynamic Theme Selector Dropdown -->
+                <div id="theme-dropdown">
+                    <button class="theme-opt" onclick="setAppTheme('light')">☀️ Normal Mode</button>
+                    <button class="theme-opt" onclick="setAppTheme('dark')">🌙 Dark Mode</button>
+                </div>
+            </div>
+
+            <div class="controls">
+                <button class="nav-btn" id="prev-btn">← Prev</button>
+                <button class="nav-btn" id="next-btn">Next →</button>
+            </div>
+        </header>
+
+        <!-- Chapter Menu Sidebar -->
+        <div id="toc-sidebar">
+            <h3 style="margin-top: 0; padding-bottom: 10px; border-bottom: 2px solid var(--border-color);">Chapters</h3>
+            <ul id="toc-list"></ul>
+        </div>
+
+        <div id="viewer-container">
+            <div id="viewer"></div>
+        </div>
+    </div>
+
+    <script>
+        let book = null;
+        let rendition = null;
+        let currentTheme = 'light';
+
+        const fileInput = document.getElementById('file-input');
+        const uploadContainer = document.getElementById('upload-container');
+        const appInterface = document.getElementById('app-interface');
+        const menuToggle = document.getElementById('menu-toggle');
+        const themeToggle = document.getElementById('theme-toggle');
+        const fullscreenToggle = document.getElementById('fullscreen-toggle');
+        const themeDropdown = document.getElementById('theme-dropdown');
+        const tocSidebar = document.getElementById('toc-sidebar');
+        const tocList = document.getElementById('toc-list');
+        const prevBtn = document.getElementById('prev-btn');
+        const nextBtn = document.getElementById('next-btn');
+
+        fileInput.addEventListener('change', function(e) {
+            const file = e.target.files[0];
+            if (!file) return;
+
+            const reader = new FileReader();
+            reader.onload = function(event) {
+                uploadContainer.style.display = 'none';
+                appInterface.style.display = 'flex';
+
+                book = ePub(event.target.result);
+                rendition = book.renderTo("viewer", {
+                    width: "100%",
+                    height: "100%",
+                    spread: "none"
+                });
+
+                // Configure ePub.js engine themes explicitly for content injection inside iframe
+                rendition.themes.register("light", { "body": { "background": "#ffffff", "color": "#333333" } });
+                rendition.themes.register("dark", { "body": { "background": "#1c1c1e", "color": "#e0e0e0" } });
+                
+                // Initialize displaying book with current default global theme setting
+                rendition.themes.select(currentTheme);
+                rendition.display();
+
+                book.loaded.navigation.then(function(toc) {
+                    tocList.innerHTML = '';
+                    toc.forEach(function(chapter) {
+                        const li = document.createElement('li');
+                        li.textContent = chapter.label.trim();
+                        li.addEventListener('click', function() {
+                            rendition.display(chapter.href);
+                            tocSidebar.classList.remove('open');
+                        });
+                        tocList.appendChild(li);
+                    });
+                });
+
+                rendition.on("rendered", function(section, view) {
+                    const doc = view.document;
+                    initSwipeGestures(doc);
+                    initKeyboardGestures(doc);
+                    
+                    doc.addEventListener('click', () => {
+                        tocSidebar.classList.remove('remove');
+                        themeDropdown.classList.remove('open');
+                    });
+                });
+            };
+            
+            reader.readAsArrayBuffer(file);
+        });
+
+        // Theme dropdown control
+        themeToggle.addEventListener('click', function(e) {
+            e.stopPropagation();
+            tocSidebar.classList.remove('open'); // Close TOC if open
+            themeDropdown.classList.toggle('open');
+        });
+
+        // Toggle Chapter Menu control
+        menuToggle.addEventListener('click', function(e) {
+            e.stopPropagation();
+            themeDropdown.classList.remove('open'); // Close theme dropdown if open
+            tocSidebar.classList.toggle('open');
+        });
+
+        // Fullscreen Toggle control
+        fullscreenToggle.addEventListener('click', function() {
+            themeDropdown.classList.remove('open');
+            tocSidebar.classList.remove('open');
+            
+            if (!document.fullscreenElement) {
+                document.documentElement.requestFullscreen().catch(err => {
+                    console.log(`Error attempting to enable full-screen mode: ${err.message}`);
+                });
+            } else {
+                document.exitFullscreen();
+            }
+        });
+
+        // Close dropdown panels clicking outer main window elements
+        document.addEventListener('click', function(e) {
+            if (!themeDropdown.contains(e.target) && e.target !== themeToggle) {
+                themeDropdown.classList.remove('open');
+            }
+            if (!tocSidebar.contains(e.target) && e.target !== menuToggle) {
+                tocSidebar.classList.remove('open');
+            }
+        });
+
+        // Controls theme switching dynamically
+        function setAppTheme(theme) {
+            currentTheme = theme;
+            document.documentElement.setAttribute('data-theme', theme);
+            themeDropdown.classList.remove('open');
+            
+            // If a book is active inside the container frame, update its layout values
+            if (rendition) {
+                rendition.themes.select(theme);
+            }
+        }
+
+        // Navigation Actions
+        function nextPage() { if (rendition) rendition.next(); }
+        function prevPage() { if (rendition) rendition.prev(); }
+
+        prevBtn.addEventListener('click', nextPage);
+        nextBtn.addEventListener('click', prevPage);
+
+        function initSwipeGestures(targetDocument) {
+            let touchStartX = 0;
+            let touchEndX = 0;
+            const minSwipeDistance = 50;
+
+            targetDocument.addEventListener('touchstart', function(e) {
+                touchStartX = e.changedTouches[0].screenX;
+            }, { passive: true });
+
+            targetDocument.addEventListener('touchend', function(e) {
+                touchEndX = e.changedTouches[0].screenX;
+                handleSwipe();
+            }, { passive: true });
+
+            function handleSwipe() {
+                const swipeDistance = touchEndX - touchStartX;
+                if (swipeDistance < -minSwipeDistance) nextPage();
+                if (swipeDistance > minSwipeDistance) prevPage();
+            }
+        }
+
+        function initKeyboardGestures(targetDocument) {
+            targetDocument.addEventListener('keydown', function(e) {
+                if (e.key === 'ArrowLeft') prevPage();
+                if (e.key === 'ArrowRight') nextPage();
+            });
+        }
+
+        document.addEventListener('keydown', function(e) {
+            if (e.key === 'ArrowLeft') prevPage();
+            if (e.key === 'ArrowRight') nextPage();
+        });
+    </script>
+</body>
+</html>
